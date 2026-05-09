@@ -215,10 +215,46 @@ def load_history_index() -> list[Path]:
 
 
 st.set_page_config(page_title="Energy Trading Agent (Streamlit)", layout="wide")
-st.title("⚡ Energy Trading Agent - Multi-Agent Streamlit版")
+
+st.markdown(
+    """
+    <style>
+    .stApp {
+        background: radial-gradient(circle at top left, #0a1020 0%, #05070f 45%, #03050a 100%);
+        color: #d8e6ff;
+    }
+    h1, h2, h3 {
+        color: #7dd3fc !important;
+        letter-spacing: 0.4px;
+    }
+    div[data-testid="stMetric"] {
+        background: rgba(15, 23, 42, 0.75);
+        border: 1px solid rgba(56, 189, 248, 0.35);
+        border-radius: 12px;
+        padding: 10px;
+        box-shadow: 0 0 24px rgba(56, 189, 248, 0.08);
+    }
+    .stButton > button {
+        background: linear-gradient(90deg, #0369a1, #0ea5e9) !important;
+        color: white !important;
+        border: 0 !important;
+        border-radius: 10px !important;
+        font-weight: 600 !important;
+    }
+    .stDownloadButton > button {
+        border-radius: 10px !important;
+        border: 1px solid rgba(125, 211, 252, 0.6) !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.title("⚡ Quantum Energy Trading Console")
+st.caption("Multi-agent market intelligence with quant visualization and export-ready reports.")
 
 with st.sidebar:
-    st.header("模型配置")
+    st.header("Model Configuration")
     api_key = st.text_input("API Key", type="password", value=os.getenv("OPENAI_API_KEY", ""))
     base_url = st.text_input("Base URL", value=os.getenv("OPENAI_BASE_URL", "https://api.deepseek.com"))
     model = st.text_input("Model", value=os.getenv("OPENAI_MODEL", "deepseek-chat"))
@@ -229,18 +265,18 @@ with c1:
 with c2:
     trade_date = st.date_input("Trade Date", value=datetime.utcnow().date() - timedelta(days=1)).strftime("%Y-%m-%d")
 
-macro_note = st.text_area("宏观/事件补充（可选）", "OPEC+ meeting, shipping bottlenecks, sanctions headlines...")
+macro_note = st.text_area("Macro / Event Notes (Optional)", "OPEC+ meeting outcomes, shipping chokepoints, sanctions headlines...")
 
-if st.button("运行完整 Multi-Agent 分析", type="primary"):
+if st.button("Run Full Multi-Agent Analysis", type="primary"):
     if not api_key:
-        st.error("请先填写 API Key")
+        st.error("Please provide your API key first.")
         st.stop()
 
     symbol = COMMODITY_MAP[commodity]
-    with st.spinner("拉取数据并运行多智能体分析..."):
+    with st.spinner("Fetching market data and running multi-agent analysis..."):
         px = fetch_price_data(symbol, trade_date)
         if px.empty:
-            st.error("未拉取到价格数据，请检查参数。")
+            st.error("No market data retrieved. Please check symbol/date settings.")
             st.stop()
         px = add_analytics(px)
         context = build_context(commodity, trade_date, px, macro_note)
@@ -249,18 +285,18 @@ if st.button("运行完整 Multi-Agent 分析", type="primary"):
 
     metrics = summarize_metrics(px)
     m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("最新收盘", f"{metrics['latest_close']:.2f}")
-    m2.metric("1日收益", f"{metrics['latest_ret_1d']:.2%}")
-    m3.metric("区间收益", f"{metrics['period_return']:.2%}")
-    m4.metric("20日年化波动", f"{metrics['latest_vol_20']:.2%}")
-    m5.metric("最大回撤", f"{metrics['max_drawdown']:.2%}")
+    m1.metric("Latest Close", f"{metrics['latest_close']:.2f}")
+    m2.metric("1D Return", f"{metrics['latest_ret_1d']:.2%}")
+    m3.metric("Window Return", f"{metrics['period_return']:.2%}")
+    m4.metric("20D Ann. Vol", f"{metrics['latest_vol_20']:.2%}")
+    m5.metric("Max Drawdown", f"{metrics['max_drawdown']:.2%}")
 
-    st.subheader("图表分析")
+    st.subheader("Quant Charts")
     st.line_chart(px[["Close", "sma_20", "sma_60"]].tail(120))
     st.bar_chart(px[["Volume"]].tail(120))
     st.line_chart(px[["ret_1d", "drawdown"]].tail(120))
 
-    st.subheader("多智能体报告")
+    st.subheader("Multi-Agent Report")
     for key, title in [
         ("technical_analysis", "Technical Analysis"),
         ("macro_analysis", "Macro Analysis"),
@@ -276,38 +312,38 @@ if st.button("运行完整 Multi-Agent 分析", type="primary"):
     md_path, json_path = save_report_locally(commodity, trade_date, sections, md_report)
 
     st.download_button(
-        "下载 Markdown 报告",
+        "Download Markdown",
         data=md_report,
         file_name=f"energy_report_{commodity}_{trade_date}.md",
         mime="text/markdown",
     )
     st.download_button(
-        "下载 JSON 报告",
+        "Download JSON",
         data=json.dumps({"commodity": commodity, "trade_date": trade_date, **sections}, ensure_ascii=False, indent=2),
         file_name=f"energy_report_{commodity}_{trade_date}.json",
         mime="application/json",
     )
     st.download_button(
-        "一键导出 PDF",
+        "One-Click Export PDF",
         data=pdf_bytes,
         file_name=f"energy_report_{commodity}_{trade_date}.pdf",
         mime="application/pdf",
     )
-    st.success(f"已存档到本地：{md_path.name} / {json_path.name}")
+    st.success(f"Saved to local archive: {md_path.name} / {json_path.name}")
 
 
 st.divider()
-st.subheader("历史报告本地存档列表")
+st.subheader("Local Report Archive")
 files = load_history_index()
 if not files:
-    st.caption("暂无历史报告，先运行一次分析后会自动存档。")
+    st.caption("No historical reports yet. Run one analysis to create local archives.")
 else:
     options = [f.name for f in files]
-    selected = st.selectbox("选择历史报告", options)
+    selected = st.selectbox("Select Historical Report", options)
     target = next((f for f in files if f.name == selected), None)
     if target:
         data = json.loads(target.read_text(encoding="utf-8"))
         st.write({"commodity": data.get("commodity"), "trade_date": data.get("trade_date")})
-        with st.expander("查看历史报告 JSON"):
+        with st.expander("View Historical Report JSON"):
             st.json(data)
-        st.download_button("下载所选历史 JSON", data=json.dumps(data, ensure_ascii=False, indent=2), file_name=target.name, mime="application/json")
+        st.download_button("Download Selected Historical JSON", data=json.dumps(data, ensure_ascii=False, indent=2), file_name=target.name, mime="application/json")
