@@ -1,6 +1,9 @@
 import json
 import os
 from datetime import datetime, timedelta
+from pathlib import Path
+
+from fpdf import FPDF
 
 import pandas as pd
 import streamlit as st
@@ -161,6 +164,37 @@ def report_to_markdown(commodity: str, trade_date: str, sections: dict) -> str:
     return "\n".join(blocks)
 
 
+
+def markdown_to_pdf_bytes(markdown_text: str) -> bytes:
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=12)
+    pdf.add_page()
+    pdf.set_font("Helvetica", size=11)
+    for line in markdown_text.splitlines():
+        clean = line.replace("**", "").replace("#", "")
+        pdf.multi_cell(0, 6, txt=clean)
+    return bytes(pdf.output(dest="S"))
+
+
+def save_report_locally(commodity: str, trade_date: str, sections: dict, markdown_text: str) -> tuple[Path, Path]:
+    history_dir = Path("streamlit_app/history")
+    history_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    stem = f"{ts}_{commodity}_{trade_date}"
+    json_path = history_dir / f"{stem}.json"
+    md_path = history_dir / f"{stem}.md"
+    json_path.write_text(json.dumps({"commodity": commodity, "trade_date": trade_date, **sections}, ensure_ascii=False, indent=2), encoding="utf-8")
+    md_path.write_text(markdown_text, encoding="utf-8")
+    return md_path, json_path
+
+
+def load_history_index() -> list[Path]:
+    history_dir = Path("streamlit_app/history")
+    if not history_dir.exists():
+        return []
+    return sorted(history_dir.glob("*.json"), reverse=True)
+
+
 st.set_page_config(page_title="Energy Trading Agent (Streamlit)", layout="wide")
 st.title("⚡ Energy Trading Agent - Multi-Agent Streamlit版")
 
@@ -219,6 +253,9 @@ if st.button("运行完整 Multi-Agent 分析", type="primary"):
         with st.expander(title, expanded=(key == "final_portfolio_decision")):
             st.markdown(sections[key])
 
+    pdf_bytes = markdown_to_pdf_bytes(md_report)
+    md_path, json_path = save_report_locally(commodity, trade_date, sections, md_report)
+
     st.download_button(
         "下载 Markdown 报告",
         data=md_report,
@@ -231,3 +268,27 @@ if st.button("运行完整 Multi-Agent 分析", type="primary"):
         file_name=f"energy_report_{commodity}_{trade_date}.json",
         mime="application/json",
     )
+    st.download_button(
+        "一键导出 PDF",
+        data=pdf_bytes,
+        file_name=f"energy_report_{commodity}_{trade_date}.pdf",
+        mime="application/pdf",
+    )
+    st.success(f"已存档到本地：{md_path.name} / {json_path.name}")
+
+
+st.divider()
+st.subheader("历史报告本地存档列表")
+files = load_history_index()
+if not files:
+    st.caption("暂无历史报告，先运行一次分析后会自动存档。")
+else:
+    options = [f.name for f in files]
+    selected = st.selectbox("选择历史报告", options)
+    target = next((f for f in files if f.name == selected), None)
+    if target:
+        data = json.loads(target.read_text(encoding="utf-8"))
+        st.write({"commodity": data.get("commodity"), "trade_date": data.get("trade_date")})
+        with st.expander("查看历史报告 JSON"):
+            st.json(data)
+        st.download_button("下载所选历史 JSON", data=json.dumps(data, ensure_ascii=False, indent=2), file_name=target.name, mime="application/json")
