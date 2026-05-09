@@ -166,14 +166,33 @@ def report_to_markdown(commodity: str, trade_date: str, sections: dict) -> str:
 
 
 def markdown_to_pdf_bytes(markdown_text: str) -> bytes:
+    """Render markdown-like text into a safe PDF byte stream.
+
+    Streamlit Cloud may hit FPDF errors when unsupported/unicode chars are present.
+    We normalize lines and strip non-latin1 characters for built-in Helvetica.
+    """
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=12)
     pdf.add_page()
     pdf.set_font("Helvetica", size=11)
-    for line in markdown_text.splitlines():
-        clean = line.replace("**", "").replace("#", "")
-        pdf.multi_cell(0, 6, txt=clean)
-    return bytes(pdf.output(dest="S"))
+
+    for raw_line in markdown_text.splitlines():
+        clean = raw_line.replace("**", "").replace("#", "").replace("	", " ").strip()
+        # Keep built-in font compatibility; avoid glyph/layout crashes on cloud runtime.
+        safe = clean.encode("latin-1", errors="replace").decode("latin-1")
+        if not safe:
+            safe = " "
+        # Avoid extremely long unbroken tokens causing layout failures.
+        chunks = [safe[i:i+120] for i in range(0, len(safe), 120)] or [" "]
+        for chunk in chunks:
+            pdf.multi_cell(190, 6, text=chunk)
+
+    out = pdf.output(dest="S")
+    if isinstance(out, bytearray):
+        return bytes(out)
+    if isinstance(out, str):
+        return out.encode("latin-1", errors="replace")
+    return bytes(out)
 
 
 def save_report_locally(commodity: str, trade_date: str, sections: dict, markdown_text: str) -> tuple[Path, Path]:
