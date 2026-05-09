@@ -28,8 +28,24 @@ def fetch_price_data(symbol: str, trade_date: str, lookback_days: int = 180) -> 
     df = yf.download(symbol, start=start, end=end, interval="1d", progress=False)
     if df.empty:
         return df
-    df = df.rename(columns=str.title)
+    if isinstance(df.columns, pd.MultiIndex):
+        # yfinance may return a MultiIndex when ticker grouping is enabled.
+        df.columns = [str(c[0]).title() for c in df.columns]
+    else:
+        df = df.rename(columns=str.title)
     return df[["Open", "High", "Low", "Close", "Volume"]].copy()
+
+
+def to_float(value) -> float:
+    """Safely convert scalar/Series/array-like values to float for Streamlit metrics."""
+    if isinstance(value, pd.Series):
+        if value.empty:
+            return 0.0
+        value = value.iloc[0]
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def add_analytics(df: pd.DataFrame) -> pd.DataFrame:
@@ -45,15 +61,16 @@ def add_analytics(df: pd.DataFrame) -> pd.DataFrame:
 
 def summarize_metrics(df: pd.DataFrame) -> dict:
     latest = df.iloc[-1]
-    start_price = df["Close"].iloc[0]
-    period_return = latest["Close"] / start_price - 1
+    latest_close = to_float(latest["Close"])
+    start_price = to_float(df["Close"].iloc[0])
+    period_return = (latest_close / start_price - 1) if start_price else 0.0
     return {
-        "latest_close": float(latest["Close"]),
-        "latest_ret_1d": float(latest["ret_1d"]) if pd.notna(latest["ret_1d"]) else 0.0,
+        "latest_close": latest_close,
+        "latest_ret_1d": to_float(latest.get("ret_1d", 0.0)) if pd.notna(latest.get("ret_1d", 0.0)) else 0.0,
         "period_return": float(period_return),
-        "latest_vol_20": float(latest["vol_20_annual"]) if pd.notna(latest["vol_20_annual"]) else 0.0,
-        "max_drawdown": float(df["drawdown"].min()) if "drawdown" in df else 0.0,
-        "avg_volume": float(df["Volume"].tail(20).mean()),
+        "latest_vol_20": to_float(latest.get("vol_20_annual", 0.0)) if pd.notna(latest.get("vol_20_annual", 0.0)) else 0.0,
+        "max_drawdown": to_float(df["drawdown"].min()) if "drawdown" in df else 0.0,
+        "avg_volume": to_float(df["Volume"].tail(20).mean()),
     }
 
 
