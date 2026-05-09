@@ -1,11 +1,11 @@
 # Streamlit 部署版本
 
-这是一个可直接部署到 Streamlit Cloud 的版本，把原项目核心流程改为单体 Python 应用：
+这是一个可直接部署到 Streamlit Cloud 的版本，把原项目核心流程改为单体 Python 应用，并增强了可视化量化分析：
 
-- 通过 `yfinance` 拉取最近 150 天数据；
-- 组装行情与宏观上下文；
-- 调用兼容 OpenAI SDK 的聊天模型（默认 DeepSeek `https://api.deepseek.com`）；
-- 在页面展示 Markdown 报告与价格图表。
+- 通过 `yfinance` 拉取最近行情数据；
+- 自动计算与展示：1日收益、区间收益、20日年化波动率、最大回撤、20/60日均线；
+- 图表展示：价格+均线、成交量、收益率与回撤；
+- 调用兼容 OpenAI SDK 的聊天模型（默认 DeepSeek `https://api.deepseek.com`）生成交易分析报告。
 
 ## 本地运行
 
@@ -29,4 +29,4 @@ streamlit run app.py
 ## 注意
 
 - 该版本不依赖原 Node/tRPC/MySQL 后端。
-- 为了保持简单，当前是单轮统一报告（不是原项目那种多 agent 分阶段入库流程）。
+- 当前仍是单轮统一报告（不是原项目那种多 agent 分阶段入库流程）。
