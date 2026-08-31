@@ -40,6 +40,16 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
+## 单机离线参赛版
+
+离线版入口为 `offline_app.py`，只读取本地 CSV/XLSX 和人工备注，不调用外部行情 API 或大模型 API。
+
+```bash
+cd streamlit_app
+pip install -r requirements-offline.txt
+streamlit run offline_app.py --server.address 127.0.0.1 --server.port 8501
+```
+
 ## Streamlit Cloud 部署
 
 1. 将仓库连接到 Streamlit Cloud。
