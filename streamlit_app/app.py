@@ -10,6 +10,12 @@ import streamlit as st
 import yfinance as yf
 from openai import OpenAI
 
+from supplemental_data import (
+    build_supplemental_profile,
+    parse_supplemental_workbook,
+    supplemental_profile_to_text,
+)
+
 COMMODITY_MAP = {
     "BRENT": "BZ=F",
     "WTI": "CL=F",
@@ -116,14 +122,33 @@ def ask(client: OpenAI, model: str, system: str, user: str) -> str:
     return resp.choices[0].message.content if resp.choices else ""
 
 
-def run_multi_agent_report(api_key: str, base_url: str, model: str, context: str) -> dict:
+def run_multi_agent_report(api_key: str, base_url: str, model: str, context: str, supplemental_context: str = "") -> dict:
     client = OpenAI(api_key=api_key, base_url=base_url)
-    technical = ask(client, model, "You are a technical analyst for energy commodities.", context)
-    macro = ask(client, model, "You are a macro analyst. Focus on rates, DXY, risk sentiment, and growth.", context)
-    geopolitical = ask(client, model, "You are a geopolitical risk analyst. Focus on sanctions, conflicts, shipping chokepoints, OPEC+ policy risk.", context)
+    supplemental_analysis = ""
+    agent_context = context
+    if supplemental_context:
+        supplemental_analysis = ask(
+            client,
+            model,
+            (
+                "You are a supplemental data analysis agent for energy commodities. "
+                "Convert cleaned raw indicators into concise fundamental insights. "
+                "Focus on supply-demand pressure, spreads, basis, inventories, import economics, "
+                "seasonality, unusual changes, data caveats, strategy implications, and risk controls."
+            ),
+            supplemental_context,
+        )
+        agent_context = (
+            f"{context}\n\nSupplemental Fundamental Data:\n{supplemental_context}\n\n"
+            f"Supplemental Data Analysis Agent:\n{supplemental_analysis}"
+        )
+
+    technical = ask(client, model, "You are a technical analyst for energy commodities.", agent_context)
+    macro = ask(client, model, "You are a macro analyst. Focus on rates, DXY, risk sentiment, and growth.", agent_context)
+    geopolitical = ask(client, model, "You are a geopolitical risk analyst. Focus on sanctions, conflicts, shipping chokepoints, OPEC+ policy risk.", agent_context)
 
     research_prompt = (
-        f"Base context:\n{context}\n\nTechnical Analysis:\n{technical}\n\nMacro Analysis:\n{macro}\n\nGeopolitical Analysis:\n{geopolitical}\n\n"
+        f"Base context:\n{agent_context}\n\nTechnical Analysis:\n{technical}\n\nMacro Analysis:\n{macro}\n\nGeopolitical Analysis:\n{geopolitical}\n\n"
         "You are the Research Manager. Produce: assumptions, scenario tree (bull/base/bear), risk limits, and action plan."
     )
     research_manager = ask(client, model, "You are the head research manager.", research_prompt)
@@ -134,12 +159,12 @@ def run_multi_agent_report(api_key: str, base_url: str, model: str, context: str
     trader_proposal = ask(client, model, "You are a senior discretionary trader.", trader_prompt)
 
     final_prompt = (
-        f"Technical:\n{technical}\n\nMacro:\n{macro}\n\nGeopolitical:\n{geopolitical}\n\nResearch Manager:\n{research_manager}\n\nTrader Proposal:\n{trader_proposal}\n\n"
+        f"Supplemental Data Analysis:\n{supplemental_analysis or 'N/A'}\n\nTechnical:\n{technical}\n\nMacro:\n{macro}\n\nGeopolitical:\n{geopolitical}\n\nResearch Manager:\n{research_manager}\n\nTrader Proposal:\n{trader_proposal}\n\n"
         "Provide Final Portfolio Decision: target allocation, confidence score (0-100), key risks, invalidation conditions, next review time."
     )
     final_decision = ask(client, model, "You are the CIO making final portfolio decisions.", final_prompt)
 
-    return {
+    sections = {
         "technical_analysis": technical,
         "macro_analysis": macro,
         "geopolitical_risk": geopolitical,
@@ -147,11 +172,15 @@ def run_multi_agent_report(api_key: str, base_url: str, model: str, context: str
         "trader_proposal": trader_proposal,
         "final_portfolio_decision": final_decision,
     }
+    if supplemental_analysis:
+        sections = {"supplemental_data_analysis": supplemental_analysis, **sections}
+    return sections
 
 
 def report_to_markdown(commodity: str, trade_date: str, sections: dict) -> str:
     blocks = [f"# Energy Trading Multi-Agent Report\n\n- Commodity: **{commodity}**\n- Trade Date: **{trade_date}**\n"]
     title_map = {
+        "supplemental_data_analysis": "Supplemental Data Analysis",
         "technical_analysis": "Technical Analysis",
         "macro_analysis": "Macro Analysis",
         "geopolitical_risk": "Geopolitical Risk",
@@ -177,7 +206,7 @@ def markdown_to_pdf_bytes(markdown_text: str) -> bytes:
     pdf.set_font("Helvetica", size=11)
 
     for raw_line in markdown_text.splitlines():
-        clean = raw_line.replace("**", "").replace("#", "").replace("	", " ").strip()
+        clean = raw_line.replace("**", "").replace("#", "").replace("\t", " ").strip()
         # Keep built-in font compatibility; avoid glyph/layout crashes on cloud runtime.
         safe = clean.encode("latin-1", errors="replace").decode("latin-1")
         if not safe:
@@ -267,6 +296,42 @@ with c2:
 
 macro_note = st.text_area("Macro / Event Notes (Optional)", "OPEC+ meeting outcomes, shipping chokepoints, sanctions headlines...")
 
+supplemental_context = ""
+supplemental_profile = pd.DataFrame()
+supplemental_metadata = {}
+with st.expander("Supplemental Fundamental Data / 原始数据增强 (Optional)", expanded=(commodity in {"LPG", "JKM"})):
+    st.caption("Upload weekly or raw Excel data for commodities where public historical data is incomplete. The file is parsed locally in this app session.")
+    supplemental_file = st.file_uploader(
+        "Upload Excel workbook",
+        type=["xlsx"],
+        help="Supports report-style workbooks with repeated indicator blocks, units, sources, dates, or week-of-year seasonality tables.",
+    )
+    use_supplemental_data = st.checkbox(
+        "Inject cleaned supplemental data into the agent workflow",
+        value=(commodity in {"LPG", "JKM"}),
+    )
+
+    if supplemental_file is not None:
+        try:
+            supplemental_df, supplemental_metadata = parse_supplemental_workbook(supplemental_file.getvalue(), commodity)
+            supplemental_profile = build_supplemental_profile(supplemental_df)
+            if supplemental_profile.empty:
+                st.warning("Workbook parsed, but no usable numeric indicator series were detected.")
+            else:
+                st.success(
+                    f"Parsed {len(supplemental_df):,} normalized records across "
+                    f"{len(supplemental_metadata.get('parsed_blocks', []))} indicator groups."
+                )
+                st.dataframe(supplemental_profile, use_container_width=True, hide_index=True)
+                with st.expander("Parsed Indicator Groups"):
+                    st.json(supplemental_metadata.get("parsed_blocks", [])[:40])
+                supplemental_context = supplemental_profile_to_text(supplemental_profile, supplemental_metadata)
+        except Exception as exc:
+            st.error(f"Supplemental data parsing failed: {type(exc).__name__}: {exc}")
+
+    if not use_supplemental_data:
+        supplemental_context = ""
+
 if st.button("Run Full Multi-Agent Analysis", type="primary"):
     if not api_key:
         st.error("Please provide your API key first.")
@@ -275,29 +340,43 @@ if st.button("Run Full Multi-Agent Analysis", type="primary"):
     symbol = COMMODITY_MAP[commodity]
     with st.spinner("Fetching market data and running multi-agent analysis..."):
         px = fetch_price_data(symbol, trade_date)
-        if px.empty:
+        has_price_data = not px.empty
+        if not has_price_data and not supplemental_context:
             st.error("No market data retrieved. Please check symbol/date settings.")
             st.stop()
-        px = add_analytics(px)
-        context = build_context(commodity, trade_date, px, macro_note)
-        sections = run_multi_agent_report(api_key, base_url, model, context)
+        if has_price_data:
+            px = add_analytics(px)
+            context = build_context(commodity, trade_date, px, macro_note)
+        else:
+            context = (
+                f"Commodity: {commodity}\nTrade Date: {trade_date}\n"
+                "Public OHLCV history was not available from yfinance for this symbol.\n"
+                f"Macro Snapshot: {fetch_macro_snapshot(trade_date)}\n"
+                f"User Macro Note: {macro_note}\n"
+                "Use uploaded supplemental fundamental data as the primary evidence base."
+            )
+        sections = run_multi_agent_report(api_key, base_url, model, context, supplemental_context=supplemental_context)
         md_report = report_to_markdown(commodity, trade_date, sections)
 
-    metrics = summarize_metrics(px)
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Latest Close", f"{metrics['latest_close']:.2f}")
-    m2.metric("1D Return", f"{metrics['latest_ret_1d']:.2%}")
-    m3.metric("Window Return", f"{metrics['period_return']:.2%}")
-    m4.metric("20D Ann. Vol", f"{metrics['latest_vol_20']:.2%}")
-    m5.metric("Max Drawdown", f"{metrics['max_drawdown']:.2%}")
+    if has_price_data:
+        metrics = summarize_metrics(px)
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("Latest Close", f"{metrics['latest_close']:.2f}")
+        m2.metric("1D Return", f"{metrics['latest_ret_1d']:.2%}")
+        m3.metric("Window Return", f"{metrics['period_return']:.2%}")
+        m4.metric("20D Ann. Vol", f"{metrics['latest_vol_20']:.2%}")
+        m5.metric("Max Drawdown", f"{metrics['max_drawdown']:.2%}")
 
-    st.subheader("Quant Charts")
-    st.line_chart(px[["Close", "sma_20", "sma_60"]].tail(120))
-    st.bar_chart(px[["Volume"]].tail(120))
-    st.line_chart(px[["ret_1d", "drawdown"]].tail(120))
+        st.subheader("Quant Charts")
+        st.line_chart(px[["Close", "sma_20", "sma_60"]].tail(120))
+        st.bar_chart(px[["Volume"]].tail(120))
+        st.line_chart(px[["ret_1d", "drawdown"]].tail(120))
+    else:
+        st.info("Public price history was unavailable; this run used supplemental uploaded data as the primary data source.")
 
     st.subheader("Multi-Agent Report")
     for key, title in [
+        ("supplemental_data_analysis", "Supplemental Data Analysis"),
         ("technical_analysis", "Technical Analysis"),
         ("macro_analysis", "Macro Analysis"),
         ("geopolitical_risk", "Geopolitical Risk"),
@@ -305,8 +384,9 @@ if st.button("Run Full Multi-Agent Analysis", type="primary"):
         ("trader_proposal", "Trader Proposal"),
         ("final_portfolio_decision", "Final Portfolio Decision"),
     ]:
-        with st.expander(title, expanded=(key == "final_portfolio_decision")):
-            st.markdown(sections[key])
+        if key in sections:
+            with st.expander(title, expanded=(key == "final_portfolio_decision")):
+                st.markdown(sections[key])
 
     pdf_bytes = markdown_to_pdf_bytes(md_report)
     md_path, json_path = save_report_locally(commodity, trade_date, sections, md_report)
